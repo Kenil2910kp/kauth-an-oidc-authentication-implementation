@@ -1,16 +1,21 @@
 import crypto from "node:crypto";
 import express from "express";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import JWT from "jsonwebtoken";
 import jose from "node-jose";
 import { db } from "./db";
-import { usersTable } from "./db/schema";
+import {
+  oauthAuthCodesTable,
+  oauthClientsTable,
+  oauthTokensTable,
+  usersTable,
+} from "./db/schema";
 import { PRIVATE_KEY, PUBLIC_KEY } from "./utils/cert";
 import type { JWTClaims } from "./utils/user-token";
 
 const app = express();
-const PORT = process.env.PORT ?? 8000;
+const PORT = process.env.PORT ?? 9000;
 
 app.use(express.json());
 app.use(express.static(path.resolve("public")));
@@ -21,14 +26,53 @@ app.get("/health", (req, res) =>
   res.json({ message: "Server is healthy", healthy: true }),
 );
 
+function issuer() {
+  return `http://localhost:${PORT}`;
+}
+
+function randomBase64Url(bytes = 32) {
+  return crypto
+    .randomBytes(bytes)
+    .toString("base64")
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
+}
+
+function sha256Hex(input: string) {
+  return crypto.createHash("sha256").update(input).digest("hex");
+}
+
+function parseBasicAuth(authHeader?: string) {
+  if (!authHeader?.startsWith("Basic ")) return null;
+  const raw = authHeader.slice(6);
+  let decoded: string;
+  try {
+    decoded = Buffer.from(raw, "base64").toString("utf8");
+  } catch {
+    return null;
+  }
+  const idx = decoded.indexOf(":");
+  if (idx === -1) return null;
+  return {
+    username: decoded.slice(0, idx),
+    password: decoded.slice(idx + 1),
+  };
+}
+
 // OIDC Endpoints
 app.get("/.well-known/openid-configuration", (req, res) => {
-  const ISSUER = `http://localhost:${PORT}`;
+  const ISSUER = issuer();
   return res.json({
     issuer: ISSUER,
-    authorization_endpoint: `${ISSUER}/o/authenticate`,
-    userinfo_endpoint: `${ISSUER}/o/userinfo`,
+    authorization_endpoint: `${ISSUER}/oauth/authorize`,
+    token_endpoint: `${ISSUER}/oauth/token`,
+    userinfo_endpoint: `${ISSUER}/oauth/userinfo`,
     jwks_uri: `${ISSUER}/.well-known/jwks.json`,
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    subject_types_supported: ["public"],
+    id_token_signing_alg_values_supported: ["RS256"],
   });
 });
 
@@ -37,12 +81,126 @@ app.get("/.well-known/jwks.json", async (_, res) => {
   return res.json({ keys: [key.toJSON()] });
 });
 
+// OAuth client registration (simple UI)
+app.get("/oauth/clients/new", (req, res) => {
+  return res.sendFile(path.resolve("public", "register-client.html"));
+});
+
+app.post("/oauth/clients", async (req, res) => {
+  const { name, appURL, redirectURI } = req.body ?? {};
+
+  if (!name || !appURL || !redirectURI) {
+    res.status(400).json({ message: "name, appURL, redirectURI are required." });
+    return;
+  }
+
+  let appURLParsed: URL;
+  let redirectParsed: URL;
+  try {
+    appURLParsed = new URL(appURL);
+    redirectParsed = new URL(redirectURI);
+  } catch {
+    res.status(400).json({ message: "appURL and redirectURI must be valid URLs." });
+    return;
+  }
+
+  if (!["http:", "https:"].includes(appURLParsed.protocol)) {
+    res.status(400).json({ message: "appURL must be http(s)." });
+    return;
+  }
+  if (!["http:", "https:"].includes(redirectParsed.protocol)) {
+    res.status(400).json({ message: "redirectURI must be http(s)." });
+    return;
+  }
+
+  const client_id = `cli_${randomBase64Url(24)}`;
+  const client_secret = `sec_${randomBase64Url(32)}`;
+
+  const salt = crypto.randomBytes(16).toString("hex");
+  const secretHash = sha256Hex(client_secret + salt);
+
+  try {
+    await db.insert(oauthClientsTable).values({
+      name,
+      appURL: appURLParsed.toString(),
+      redirectURI: redirectParsed.toString(),
+      clientId: client_id,
+      clientSecretHash: secretHash,
+      clientSecretSalt: salt,
+    });
+  } catch (err: any) {
+    // drizzle wraps pg errors; surface the useful message for debugging
+    const message =
+      err?.cause?.message ??
+      err?.message ??
+      "Failed to create client (database error).";
+    res.status(500).json({ message });
+    return;
+  }
+
+  res.status(201).json({ client_id, client_secret });
+});
+
+
+app.get("/callback", (req, res) => {
+  return res.sendFile(path.resolve("public", "callback.html"));
+});
+
+app.get("/oauth/authorize", async (req, res) => {
+  const response_type = String(req.query.response_type ?? "");
+  const client_id = String(req.query.client_id ?? "");
+  const redirect_uri = String(req.query.redirect_uri ?? "");
+  const scope = typeof req.query.scope === "string" ? req.query.scope : undefined;
+  const state = typeof req.query.state === "string" ? req.query.state : undefined;
+  const nonce = typeof req.query.nonce === "string" ? req.query.nonce : undefined;
+
+  if (response_type !== "code") {
+    res.status(400).json({ message: "Only response_type=code is supported." });
+    return;
+  }
+  if (!client_id || !redirect_uri) {
+    res.status(400).json({ message: "client_id and redirect_uri are required." });
+    return;
+  }
+
+  const [client] = await db
+    .select()
+    .from(oauthClientsTable)
+    .where(eq(oauthClientsTable.clientId, client_id))
+    .limit(1);
+
+  if (!client) {
+    res.status(400).json({ message: "Invalid client_id." });
+    return;
+  }
+
+  if (client.redirectURI !== redirect_uri) {
+    res.status(400).json({ message: "redirect_uri is not allowed for this client." });
+    return;
+  }
+
+  const q = new URLSearchParams();
+  q.set("client_id", client_id);
+  q.set("redirect_uri", redirect_uri);
+  if (scope) q.set("scope", scope);
+  if (state) q.set("state", state);
+  if (nonce) q.set("nonce", nonce);
+
+  res.redirect(`/o/authenticate?${q.toString()}`);
+});
+
 app.get("/o/authenticate", (req, res) => {
   return res.sendFile(path.resolve("public", "authenticate.html"));
 });
 
 app.post("/o/authenticate/sign-in", async (req, res) => {
   const { email, password } = req.body;
+  const client_id = typeof req.body?.client_id === "string" ? req.body.client_id : undefined;
+  const redirect_uri =
+    typeof req.body?.redirect_uri === "string" ? req.body.redirect_uri : undefined;
+  const state = typeof req.body?.state === "string" ? req.body.state : undefined;
+  const nonce = typeof req.body?.nonce === "string" ? req.body.nonce : undefined;
+  const scope = typeof req.body?.scope === "string" ? req.body.scope : undefined;
 
   if (!email || !password) {
     res.status(400).json({ message: "Email and password are required." });
@@ -70,7 +228,47 @@ app.post("/o/authenticate/sign-in", async (req, res) => {
     return;
   }
 
-  const ISSUER = `http://localhost:${PORT}`;
+  if (client_id && redirect_uri) {
+    const [client] = await db
+      .select()
+      .from(oauthClientsTable)
+      .where(eq(oauthClientsTable.clientId, client_id))
+      .limit(1);
+
+    if (!client) {
+      res.status(400).json({ message: "Invalid client_id." });
+      return;
+    }
+    if (client.redirectURI !== redirect_uri) {
+      res.status(400).json({ message: "redirect_uri is not allowed for this client." });
+      return;
+    }
+
+    const code = `c_${randomBase64Url(32)}`;
+    const codeSalt = crypto.randomBytes(16).toString("hex");
+    const codeHash = sha256Hex(code + codeSalt);
+    const expiresAt = new Date(Date.now() + 2 * 60 * 1000); 
+
+    await db.insert(oauthAuthCodesTable).values({
+      codeHash,
+      codeSalt,
+      clientId: client_id,
+      userId: user.id,
+      redirectURI: redirect_uri,
+      scope: scope ?? null,
+      nonce: nonce ?? null,
+      expiresAt,
+    });
+
+    const u = new URL(redirect_uri);
+    u.searchParams.set("code", code);
+    if (state) u.searchParams.set("state", state);
+
+    res.json({ redirect: u.toString() });
+    return;
+  }
+
+  const ISSUER = issuer();
   const now = Math.floor(Date.now() / 1000);
 
   const claims: JWTClaims = {
@@ -92,6 +290,12 @@ app.post("/o/authenticate/sign-in", async (req, res) => {
 
 app.post("/o/authenticate/sign-up", async (req, res) => {
   const { firstName, lastName, email, password } = req.body;
+  const client_id = typeof req.body?.client_id === "string" ? req.body.client_id : undefined;
+  const redirect_uri =
+    typeof req.body?.redirect_uri === "string" ? req.body.redirect_uri : undefined;
+  const state = typeof req.body?.state === "string" ? req.body.state : undefined;
+  const nonce = typeof req.body?.nonce === "string" ? req.body.nonce : undefined;
+  const scope = typeof req.body?.scope === "string" ? req.body.scope : undefined;
 
   if (!email || !password || !firstName) {
     res
@@ -127,10 +331,287 @@ app.post("/o/authenticate/sign-up", async (req, res) => {
     salt,
   });
 
+  if (client_id && redirect_uri) {
+    const [client] = await db
+      .select()
+      .from(oauthClientsTable)
+      .where(eq(oauthClientsTable.clientId, client_id))
+      .limit(1);
+
+    if (!client) {
+      res.status(400).json({ message: "Invalid client_id." });
+      return;
+    }
+    if (client.redirectURI !== redirect_uri) {
+      res.status(400).json({ message: "redirect_uri is not allowed for this client." });
+      return;
+    }
+
+    const [createdUser] = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.email, email))
+      .limit(1);
+
+    if (!createdUser) {
+      res.status(500).json({ message: "Unable to create account." });
+      return;
+    }
+
+    const code = `c_${randomBase64Url(32)}`;
+    const codeSalt = crypto.randomBytes(16).toString("hex");
+    const codeHash = sha256Hex(code + codeSalt);
+    const expiresAt = new Date(Date.now() + 2 * 60 * 1000);
+
+    await db.insert(oauthAuthCodesTable).values({
+      codeHash,
+      codeSalt,
+      clientId: client_id,
+      userId: createdUser.id,
+      redirectURI: redirect_uri,
+      scope: scope ?? null,
+      nonce: nonce ?? null,
+      expiresAt,
+    });
+
+    const u = new URL(redirect_uri);
+    u.searchParams.set("code", code);
+    if (state) u.searchParams.set("state", state);
+
+    res.status(201).json({ redirect: u.toString() });
+    return;
+  }
+
   res.status(201).json({ ok: true });
 });
 
-app.get("/o/userinfo", async (req, res) => {
+app.post("/oauth/token", async (req, res) => {
+  const grant_type = String(req.body?.grant_type ?? "");
+
+  const basic = parseBasicAuth(req.headers.authorization);
+  const client_id =
+    (basic?.username ?? (typeof req.body?.client_id === "string" ? req.body.client_id : "")) ||
+    "";
+  const client_secret =
+    (basic?.password ??
+      (typeof req.body?.client_secret === "string" ? req.body.client_secret : "")) ||
+    "";
+
+  if (!client_id || !client_secret) {
+    res.status(401).json({ message: "Missing client credentials." });
+    return;
+  }
+
+  const [client] = await db
+    .select()
+    .from(oauthClientsTable)
+    .where(eq(oauthClientsTable.clientId, client_id))
+    .limit(1);
+
+  if (!client) {
+    res.status(401).json({ message: "Invalid client credentials." });
+    return;
+  }
+
+  const expected = sha256Hex(client_secret + client.clientSecretSalt);
+  if (expected !== client.clientSecretHash) {
+    res.status(401).json({ message: "Invalid client credentials." });
+    return;
+  }
+
+  const ISSUER = issuer();
+  const now = Math.floor(Date.now() / 1000);
+
+  if (grant_type === "authorization_code") {
+    const code = typeof req.body?.code === "string" ? req.body.code : "";
+    const redirect_uri = typeof req.body?.redirect_uri === "string" ? req.body.redirect_uri : "";
+    if (!code || !redirect_uri) {
+      res.status(400).json({ message: "code and redirect_uri are required." });
+      return;
+    }
+    if (redirect_uri !== client.redirectURI) {
+      res.status(400).json({ message: "redirect_uri mismatch." });
+      return;
+    }
+
+    // Find the specific code: we store only a salted hash, so we check candidates.
+    const candidates = await db
+      .select()
+      .from(oauthAuthCodesTable)
+      .where(
+        and(
+          eq(oauthAuthCodesTable.clientId, client_id),
+          eq(oauthAuthCodesTable.redirectURI, redirect_uri),
+          isNull(oauthAuthCodesTable.usedAt),
+        ),
+      )
+      .orderBy(oauthAuthCodesTable.createdAt)
+      .limit(100);
+
+    const nowMs = Date.now();
+    const match = candidates.find((row) => {
+      if (row.expiresAt.getTime() < nowMs) return false;
+      const computed = sha256Hex(code + row.codeSalt);
+      return computed === row.codeHash;
+    });
+
+    if (!match) {
+      const expiredMatch = candidates.find((row) => {
+        const computed = sha256Hex(code + row.codeSalt);
+        return computed === row.codeHash;
+      });
+      res
+        .status(400)
+        .json({ message: expiredMatch ? "Code expired." : "Invalid code." });
+      return;
+    }
+
+    await db
+      .update(oauthAuthCodesTable)
+      .set({ usedAt: new Date() })
+      .where(eq(oauthAuthCodesTable.id, match.id));
+
+    const jti = `atk_${randomBase64Url(24)}`;
+    const accessExp = now + 60; 
+    const accessExpiresAt = new Date(accessExp * 1000);
+
+    const refresh = `rt_${randomBase64Url(48)}`;
+    const refreshSalt = crypto.randomBytes(16).toString("hex");
+    const refreshHash = sha256Hex(refresh + refreshSalt);
+    const refreshExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); 
+
+    const claims: JWTClaims & { jti: string; aud: string } = {
+      iss: ISSUER,
+      sub: match.userId,
+      aud: client_id,
+      jti,
+      email: "",
+      email_verified: "false",
+      exp: accessExp,
+      given_name: "",
+      name: "",
+    };
+
+    const [user] = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.id, match.userId))
+      .limit(1);
+
+    if (!user) {
+      res.status(404).json({ message: "User not found." });
+      return;
+    }
+
+    claims.email = user.email;
+    claims.email_verified = String(user.emailVerified);
+    claims.given_name = user.firstName ?? "";
+    claims.family_name = user.lastName ?? undefined;
+    claims.name = [user.firstName, user.lastName].filter(Boolean).join(" ");
+    claims.picture = user.profileImageURL ?? undefined;
+
+    const access_token = JWT.sign(claims, PRIVATE_KEY, { algorithm: "RS256" });
+
+    await db.insert(oauthTokensTable).values({
+      jti,
+      clientId: client_id,
+      userId: user.id,
+      scope: match.scope ?? null,
+      accessExpiresAt,
+      refreshTokenHash: refreshHash,
+      refreshTokenSalt: refreshSalt,
+      refreshExpiresAt,
+    });
+
+    res.json({
+      token_type: "Bearer",
+      access_token,
+      expires_in: 60,
+      refresh_token: refresh,
+    });
+    return;
+  }
+
+  if (grant_type === "refresh_token") {
+    const refresh_token =
+      typeof req.body?.refresh_token === "string" ? req.body.refresh_token : "";
+    if (!refresh_token) {
+      res.status(400).json({ message: "refresh_token is required." });
+      return;
+    }
+
+    const refreshHashCandidates = await db
+      .select()
+      .from(oauthTokensTable)
+      .where(and(eq(oauthTokensTable.clientId, client_id), isNull(oauthTokensTable.revokedAt)))
+      .limit(50);
+
+    const matching = refreshHashCandidates.find((row) => {
+      const computed = sha256Hex(refresh_token + row.refreshTokenSalt);
+      return computed === row.refreshTokenHash;
+    });
+
+    if (!matching) {
+      res.status(400).json({ message: "Invalid refresh_token." });
+      return;
+    }
+
+    if (matching.refreshExpiresAt.getTime() < Date.now()) {
+      res.status(400).json({ message: "Refresh token expired." });
+      return;
+    }
+
+    const [user] = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.id, matching.userId))
+      .limit(1);
+
+    if (!user) {
+      res.status(404).json({ message: "User not found." });
+      return;
+    }
+
+    const jti = `atk_${randomBase64Url(24)}`;
+    const accessExp = now + 60;
+    const accessExpiresAt = new Date(accessExp * 1000);
+
+    const claims: JWTClaims & { jti: string; aud: string } = {
+      iss: ISSUER,
+      sub: user.id,
+      aud: client_id,
+      jti,
+      email: user.email,
+      email_verified: String(user.emailVerified),
+      exp: accessExp,
+      given_name: user.firstName ?? "",
+      family_name: user.lastName ?? undefined,
+      name: [user.firstName, user.lastName].filter(Boolean).join(" "),
+      picture: user.profileImageURL ?? undefined,
+    };
+
+    const access_token = JWT.sign(claims, PRIVATE_KEY, { algorithm: "RS256" });
+
+    // rotate access token jti in DB (keep same refresh token)
+    await db
+      .update(oauthTokensTable)
+      .set({ jti, accessExpiresAt })
+      .where(eq(oauthTokensTable.id, matching.id));
+
+    res.json({
+      token_type: "Bearer",
+      access_token,
+      expires_in: 60,
+      refresh_token,
+    });
+    return;
+  }
+
+  res.status(400).json({ message: "Unsupported grant_type." });
+});
+
+// OAuth / OIDC userinfo endpoint
+app.get("/oauth/userinfo", async (req, res) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader?.startsWith("Bearer ")) {
@@ -142,12 +623,32 @@ app.get("/o/userinfo", async (req, res) => {
 
   const token = authHeader.slice(7);
 
-  let claims: JWTClaims;
+  let claims: (JWTClaims & { jti?: string }) | null = null;
   try {
     claims = JWT.verify(token, PUBLIC_KEY, {
       algorithms: ["RS256"],
-    }) as JWTClaims;
+    }) as JWTClaims & { jti?: string };
   } catch {
+    res.status(401).json({ message: "Invalid or expired token." });
+    return;
+  }
+
+  if (!claims?.jti) {
+    res.status(401).json({ message: "Invalid token." });
+    return;
+  }
+
+  const [stored] = await db
+    .select()
+    .from(oauthTokensTable)
+    .where(and(eq(oauthTokensTable.jti, claims.jti), isNull(oauthTokensTable.revokedAt)))
+    .limit(1);
+
+  if (!stored) {
+    res.status(401).json({ message: "Token revoked or unknown." });
+    return;
+  }
+  if (stored.accessExpiresAt.getTime() < Date.now()) {
     res.status(401).json({ message: "Invalid or expired token." });
     return;
   }

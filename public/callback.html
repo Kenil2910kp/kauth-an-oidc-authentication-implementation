@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OAuth Callback</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --fg: #09090b;
+        --muted: #71717a;
+        --border: #e4e4e7;
+        --card-bg: #ffffff;
+        --radius: 0.6rem;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #09090b;
+          --fg: #fafafa;
+          --muted: #a1a1aa;
+          --border: #27272a;
+          --card-bg: #18181b;
+        }
+      }
+      body {
+        font-family: "Inter", system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        padding: 1rem;
+      }
+      .card {
+        width: 100%;
+        max-width: 760px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--card-bg);
+        padding: 1.25rem;
+      }
+      h1 {
+        font-size: 1.1rem;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+      p {
+        margin-top: 0.35rem;
+        color: var(--muted);
+        font-size: 0.9rem;
+        line-height: 1.4;
+      }
+      pre {
+        margin-top: 0.9rem;
+        padding: 0.9rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: auto;
+        font-size: 0.85rem;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>OAuth callback received</h1>
+      <p>
+        Copy the <b>code</b> and exchange it at <code>/oauth/token</code>. This
+        page is only for local testing.
+      </p>
+      <pre><code id="out"></code></pre>
+    </div>
+
+    <script>
+      const p = new URLSearchParams(window.location.search);
+      const payload = {
+        code: p.get("code"),
+        state: p.get("state"),
+      };
+      document.getElementById("out").textContent = JSON.stringify(payload, null, 2);
+    </script>
+  </body>
+</html>
