@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Application details — KAuth Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles/shared.css" />
+  <style>
+    body { padding: 1.5rem; max-width: 760px; margin: 0 auto; }
+    .back { font-size: 0.875rem; margin-bottom: 1rem; display: inline-block; }
+    h1 { font-size: 1.375rem; font-weight: 600; }
+    .sub { color: var(--muted); font-size: 0.875rem; margin-top: 0.25rem; margin-bottom: 1.5rem; }
+    .panel { padding: 1.5rem; margin-bottom: 1rem; }
+    .panel h2 { font-size: 0.8125rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 1rem; }
+    .row { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; padding: 0.75rem 0; border-bottom: 1px solid var(--border); }
+    .row:last-child { border-bottom: none; }
+    .row-label { font-size: 0.8125rem; color: var(--muted); min-width: 140px; }
+    .row-value { font-size: 0.875rem; flex: 1; text-align: right; }
+    .auth-url {
+      margin-top: 0.5rem;
+      padding: 0.75rem;
+      background: color-mix(in srgb, var(--fg) 4%, transparent);
+      border-radius: var(--radius);
+      font-size: 0.75rem;
+      word-break: break-all;
+      text-align: left;
+    }
+    .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; }
+    #newSecret { display: none; margin-top: 1rem; padding: 0.75rem; border: 1px solid #16a34a; border-radius: var(--radius); background: color-mix(in srgb, #16a34a 8%, transparent); }
+  </style>
+</head>
+<body>
+  <a class="back" href="/console/dashboard.html">← Back to applications</a>
+  <h1 id="appName">Application</h1>
+  <p class="sub" id="appMeta"></p>
+
+  <div class="card panel">
+    <h2>Credentials</h2>
+    <div class="row">
+      <span class="row-label">Client ID</span>
+      <span class="row-value mono" id="clientId">—</span>
+    </div>
+    <div class="row">
+      <span class="row-label">Client secret</span>
+      <span class="row-value" style="color:var(--muted)">Hidden (shown once at creation)</span>
+    </div>
+    <div class="actions">
+      <button class="btn btn-outline" type="button" id="copyClientId">Copy client ID</button>
+      <button class="btn btn-outline" type="button" id="regenSecret">Regenerate secret</button>
+    </div>
+    <div id="newSecret">
+      <strong>New client secret (copy now):</strong>
+      <div class="mono" id="newSecretValue" style="margin-top:0.35rem"></div>
+    </div>
+  </div>
+
+  <div class="card panel">
+    <h2>Configuration</h2>
+    <div class="row">
+      <span class="row-label">Application URL</span>
+      <span class="row-value" id="appURL">—</span>
+    </div>
+    <div class="row">
+      <span class="row-label">Redirect URI</span>
+      <span class="row-value mono" id="redirectURI">—</span>
+    </div>
+    <div class="row">
+      <span class="row-label">Created</span>
+      <span class="row-value" id="createdAt">—</span>
+    </div>
+  </div>
+
+  <div class="card panel">
+    <h2>Integration</h2>
+    <p style="font-size:0.875rem;color:var(--muted);margin-bottom:0.75rem">Redirect users to this URL to start sign-in:</p>
+    <div class="auth-url mono" id="authorizeUrl"></div>
+    <div class="actions">
+      <button class="btn btn-outline" type="button" id="copyAuthUrl">Copy authorize URL</button>
+      <a class="btn btn-primary" id="testLogin" href="#" target="_blank">Test login flow</a>
+    </div>
+  </div>
+
+  <script src="/js/console.js"></script>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const appId = params.get('id');
+    let app = null;
+
+    (async () => {
+      if (!(await requireAuth()) || !appId) {
+        window.location.href = '/console/dashboard.html';
+        return;
+      }
+
+      const { res, data } = await api(`/console/apps/${appId}`);
+      if (!res.ok) {
+        window.location.href = '/console/dashboard.html';
+        return;
+      }
+
+      app = data.app;
+      document.getElementById('appName').textContent = app.name;
+      document.getElementById('appMeta').textContent = `OAuth 2.0 · Authorization code`;
+      document.getElementById('clientId').textContent = app.clientId;
+      document.getElementById('appURL').textContent = app.appURL;
+      document.getElementById('redirectURI').textContent = app.redirectURI;
+      document.getElementById('createdAt').textContent = formatDate(app.createdAt);
+
+      const base = window.location.origin;
+      const authUrl = `${base}/oauth/authorize?response_type=code&client_id=${encodeURIComponent(app.clientId)}&redirect_uri=${encodeURIComponent(app.redirectURI)}&state=test`;
+      document.getElementById('authorizeUrl').textContent = authUrl;
+      document.getElementById('testLogin').href = authUrl;
+    })();
+
+    document.getElementById('copyClientId').addEventListener('click', () => {
+      if (app) copyText(app.clientId);
+    });
+    document.getElementById('copyAuthUrl').addEventListener('click', () => {
+      copyText(document.getElementById('authorizeUrl').textContent);
+    });
+    document.getElementById('regenSecret').addEventListener('click', async () => {
+      if (!app || !confirm('Regenerate client secret? The old secret will stop working immediately.')) return;
+      const { res, data } = await api(`/console/apps/${app.id}/regenerate-secret`, { method: 'POST' });
+      if (!res.ok) return alert(data.message || 'Failed');
+      document.getElementById('newSecret').style.display = 'block';
+      document.getElementById('newSecretValue').textContent = data.client_secret;
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create application — KAuth Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles/shared.css" />
+  <style>
+    body { padding: 1.5rem; max-width: 640px; margin: 0 auto; }
+    .back { font-size: 0.875rem; margin-bottom: 1rem; display: inline-block; }
+    h1 { font-size: 1.375rem; font-weight: 600; letter-spacing: -0.02em; }
+    .sub { color: var(--muted); font-size: 0.875rem; margin-top: 0.35rem; margin-bottom: 1.5rem; }
+    .panel { padding: 1.5rem; }
+    .hint { font-size: 0.75rem; color: var(--muted); margin-top: 0.35rem; }
+    .secret-box {
+      margin-top: 1.25rem;
+      padding: 1rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--primary) 4%, var(--card));
+    }
+    .secret-row { margin-bottom: 0.75rem; }
+    .secret-row:last-child { margin-bottom: 0; }
+    .secret-label { font-size: 0.75rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  </style>
+</head>
+<body>
+  <a class="back" href="/console/dashboard.html">← Back to applications</a>
+  <h1>Create OAuth application</h1>
+  <p class="sub">Register a new client. You'll receive a client ID and secret (shown once).</p>
+
+  <div class="card panel">
+    <div id="error" class="alert alert-error" style="display:none"></div>
+    <div id="success" class="alert alert-success" style="display:none"></div>
+
+    <form id="form">
+      <div class="field">
+        <label class="label" for="name">Application name</label>
+        <input class="input" id="name" required placeholder="My Web App" />
+      </div>
+      <div class="field">
+        <label class="label" for="appURL">Application URL</label>
+        <input class="input" id="appURL" type="url" required placeholder="http://localhost:5173" />
+        <p class="hint">Homepage of your application</p>
+      </div>
+      <div class="field">
+        <label class="label" for="redirectURI">Authorized redirect URI</label>
+        <input class="input" id="redirectURI" type="url" required placeholder="http://localhost:5173/callback" />
+        <p class="hint">Where users are sent after login (must match exactly in token exchange)</p>
+      </div>
+      <button class="btn btn-primary" type="submit" id="submit">Create application</button>
+    </form>
+
+    <div id="credentials" class="secret-box" style="display:none">
+      <p style="font-size:0.875rem;font-weight:600;margin-bottom:0.75rem">Save these credentials — the secret won't be shown again.</p>
+      <div class="secret-row">
+        <div class="secret-label">Client ID</div>
+        <code id="clientId"></code>
+        <button class="btn btn-outline" type="button" style="margin-top:0.35rem;height:1.75rem;font-size:0.75rem" id="copyId">Copy</button>
+      </div>
+      <div class="secret-row">
+        <div class="secret-label">Client secret</div>
+        <code id="clientSecret"></code>
+        <button class="btn btn-outline" type="button" style="margin-top:0.35rem;height:1.75rem;font-size:0.75rem" id="copySecret">Copy</button>
+      </div>
+      <a class="btn btn-primary" href="/console/dashboard.html" style="margin-top:1rem">Go to dashboard</a>
+    </div>
+  </div>
+
+  <script src="/js/console.js"></script>
+  <script>
+    (async () => { if (!(await requireAuth())) return; })();
+
+    const form = document.getElementById('form');
+    const errorEl = document.getElementById('error');
+    const submit = document.getElementById('submit');
+    let createdSecret = '';
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorEl.style.display = 'none';
+      submit.disabled = true;
+
+      const { res, data } = await api('/console/apps', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: document.getElementById('name').value.trim(),
+          appURL: document.getElementById('appURL').value.trim(),
+          redirectURI: document.getElementById('redirectURI').value.trim(),
+        }),
+      });
+
+      if (!res.ok) {
+        errorEl.textContent = data.message || 'Failed to create application.';
+        errorEl.style.display = 'block';
+        submit.disabled = false;
+        return;
+      }
+
+      document.getElementById('clientId').textContent = data.client_id;
+      document.getElementById('clientSecret').textContent = data.client_secret;
+      createdSecret = data.client_secret;
+      document.getElementById('credentials').style.display = 'block';
+      form.style.display = 'none';
+    });
+
+    document.getElementById('copyId').addEventListener('click', () => copyText(document.getElementById('clientId').textContent));
+    document.getElementById('copySecret').addEventListener('click', () => copyText(createdSecret));
+  </script>
+</body>
+</html>

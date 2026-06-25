@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create account — KAuth Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles/shared.css" />
+  <style>
+    body { display: grid; place-items: center; padding: 1rem; }
+    .wrap { width: 100%; max-width: 420px; }
+    .brand { text-align: center; margin-bottom: 1.5rem; }
+    .brand h1 { font-size: 1.25rem; font-weight: 600; }
+    .brand p { color: var(--muted); font-size: 0.875rem; margin-top: 0.25rem; }
+    .panel { padding: 1.75rem; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    .footer { text-align: center; margin-top: 1rem; font-size: 0.8125rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <h1>Create developer account</h1>
+      <p>Register apps and manage OAuth credentials</p>
+    </div>
+    <div class="card panel">
+      <div id="error" class="alert alert-error" style="display:none"></div>
+      <form id="form">
+        <div class="row">
+          <div class="field">
+            <label class="label" for="firstName">First name</label>
+            <input class="input" id="firstName" required placeholder="Jane" />
+          </div>
+          <div class="field">
+            <label class="label" for="lastName">Last name</label>
+            <input class="input" id="lastName" placeholder="Doe" />
+          </div>
+        </div>
+        <div class="field">
+          <label class="label" for="email">Email</label>
+          <input class="input" id="email" type="email" autocomplete="email" required placeholder="you@company.com" />
+        </div>
+        <div class="field">
+          <label class="label" for="password">Password</label>
+          <input class="input" id="password" type="password" autocomplete="new-password" required placeholder="Min. 8 characters" />
+        </div>
+        <button class="btn btn-primary" type="submit" id="submit" style="width:100%">Create account</button>
+      </form>
+    </div>
+    <p class="footer">Already have an account? <a href="/console/login.html">Sign in</a></p>
+  </div>
+  <script src="/js/console.js"></script>
+  <script>
+    const form = document.getElementById('form');
+    const errorEl = document.getElementById('error');
+    const submit = document.getElementById('submit');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorEl.style.display = 'none';
+      const password = document.getElementById('password').value;
+      if (password.length < 8) {
+        errorEl.textContent = 'Password must be at least 8 characters.';
+        errorEl.style.display = 'block';
+        return;
+      }
+      submit.disabled = true;
+      const { res, data } = await api('/console/auth/sign-up', {
+        method: 'POST',
+        body: JSON.stringify({
+          firstName: document.getElementById('firstName').value.trim(),
+          lastName: document.getElementById('lastName').value.trim() || undefined,
+          email: document.getElementById('email').value.trim(),
+          password,
+        }),
+      });
+      if (!res.ok) {
+        errorEl.textContent = data.message || 'Sign up failed.';
+        errorEl.style.display = 'block';
+        submit.disabled = false;
+        return;
+      }
+      window.location.href = '/console/dashboard.html';
+    });
+  </script>
+</body>
+</html>

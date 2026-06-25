@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign in — KAuth Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles/shared.css" />
+  <style>
+    body { display: grid; place-items: center; padding: 1rem; }
+    .wrap { width: 100%; max-width: 400px; }
+    .brand { text-align: center; margin-bottom: 1.5rem; }
+    .brand h1 { font-size: 1.25rem; font-weight: 600; }
+    .brand p { color: var(--muted); font-size: 0.875rem; margin-top: 0.25rem; }
+    .panel { padding: 1.75rem; }
+    .footer { text-align: center; margin-top: 1rem; font-size: 0.8125rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <h1>KAuth Console</h1>
+      <p>Sign in to manage your OAuth applications</p>
+    </div>
+    <div class="card panel">
+      <div id="error" class="alert alert-error" style="display:none"></div>
+      <form id="form">
+        <div class="field">
+          <label class="label" for="email">Email</label>
+          <input class="input" id="email" type="email" autocomplete="email" required placeholder="you@company.com" />
+        </div>
+        <div class="field">
+          <label class="label" for="password">Password</label>
+          <input class="input" id="password" type="password" autocomplete="current-password" required placeholder="••••••••" />
+        </div>
+        <button class="btn btn-primary" type="submit" id="submit" style="width:100%">Sign in</button>
+      </form>
+    </div>
+    <p class="footer">No account? <a href="/console/signup.html">Create one</a></p>
+  </div>
+  <script src="/js/console.js"></script>
+  <script>
+    const form = document.getElementById('form');
+    const errorEl = document.getElementById('error');
+    const submit = document.getElementById('submit');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorEl.style.display = 'none';
+      submit.disabled = true;
+      const { res, data } = await api('/console/auth/sign-in', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: document.getElementById('email').value.trim(),
+          password: document.getElementById('password').value,
+        }),
+      });
+      if (!res.ok) {
+        errorEl.textContent = data.message || 'Sign in failed.';
+        errorEl.style.display = 'block';
+        submit.disabled = false;
+        return;
+      }
+      window.location.href = '/console/dashboard.html';
+    });
+  </script>
+</body>
+</html>

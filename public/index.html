@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KAuth — OAuth & OIDC Provider</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles/shared.css" />
+  <style>
+    .hero {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 4rem 1.5rem 3rem;
+      text-align: center;
+    }
+    .logo {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 700;
+      font-size: 1.125rem;
+      margin-bottom: 2rem;
+    }
+    .logo-mark {
+      width: 36px;
+      height: 36px;
+      border-radius: 0.5rem;
+      background: var(--primary);
+      color: white;
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+    }
+    h1 {
+      font-size: clamp(2rem, 5vw, 3rem);
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      font-weight: 700;
+    }
+    .lead {
+      margin-top: 1rem;
+      color: var(--muted);
+      font-size: 1.0625rem;
+      line-height: 1.6;
+      max-width: 560px;
+      margin-inline: auto;
+    }
+    .actions {
+      margin-top: 2rem;
+      display: flex;
+      gap: 0.75rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .features {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 1.5rem 4rem;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem;
+    }
+    .feature {
+      padding: 1.25rem;
+    }
+    .feature h3 {
+      font-size: 0.9375rem;
+      font-weight: 600;
+      margin-bottom: 0.35rem;
+    }
+    .feature p {
+      font-size: 0.875rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    nav {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 1rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="logo"><span class="logo-mark">K</span> KAuth</div>
+    <div style="display:flex;gap:0.5rem">
+      <a class="btn btn-outline" href="/console/login.html">Sign in</a>
+      <a class="btn btn-primary" href="/console/signup.html">Get started</a>
+    </div>
+  </nav>
+
+  <section class="hero">
+    <h1>OAuth & OIDC for your apps</h1>
+    <p class="lead">
+      Register applications, manage client credentials, and let users sign in with
+      authorization code flow — access tokens, refresh tokens, and userinfo included.
+    </p>
+    <div class="actions">
+      <a class="btn btn-primary" href="/console/signup.html">Create developer account</a>
+      <a class="btn btn-outline" href="/.well-known/openid-configuration">OIDC discovery</a>
+    </div>
+  </section>
+
+  <section class="features">
+    <div class="card feature">
+      <h3>Developer console</h3>
+      <p>Register apps like Google Cloud Console. View all projects, client IDs, and redirect URIs in one place.</p>
+    </div>
+    <div class="card feature">
+      <h3>Authorization code flow</h3>
+      <p>Standard OAuth2 flow: authorize → login → code → token exchange with 60-second access tokens.</p>
+    </div>
+    <div class="card feature">
+      <h3>Userinfo endpoint</h3>
+      <p>Protected <code>/oauth/userinfo</code> returns profile data when a valid access token is presented.</p>
+    </div>
+  </section>
+</body>
+</html>
